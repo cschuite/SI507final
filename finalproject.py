@@ -1,8 +1,7 @@
 import secrets
-import requests
+import requests #venv
 import sqlite3 as sqlite
 import json
-import numpy as np
 import plotly.plotly as py
 from plotly.graph_objs import *
 import plotly.graph_objs as go
@@ -19,12 +18,11 @@ CACHE_FNAME = 'cache.json'
 DBNAME = "restaurants.db"
 RESTAURANT_DICT = {}
 
-#class definitions
+#class definition
 class Restaurant:
 	def __init__(self, name, street_address, city, state, zip_code):
 		self.name = name
 		self.address = "{} {} {} {}".format(street_address, city, state, zip_code)
-
 #getting data from APIS
 #cache code comes from lecture notes
 try:
@@ -98,7 +96,8 @@ def create_restaurant_db():
 			'Restaurant_Id' INT,
 			'Zomato_Id' INT,
 			'Cuisine' TEXT,
-			'Menu' TEXT
+			'Menu' TEXT,
+			'Photo' TEXT
 			)
 	'''
 	cur.execute(statement)
@@ -186,13 +185,13 @@ def get_and_store_zomato_data(searchterm):
 	zomato_search_string = make_request_using_cache(request_baseurl = zomato_baseurl, request_params = zomato_search_params, request_headers = zomato_headers)
 
 	restaurant_id = RESTAURANT_DICT[searchterm]
-
-	zomato_id = int(zomato_search_string["restaurants"][0]["restaurant"]["id"])
-
-	zomato_detailurl = "https://developers.zomato.com/api/v2.1/restaurant"
-	zomato_detail_params = {"res_id":zomato_id}
-	zomato_detail_string = make_request_using_cache(request_baseurl = zomato_detailurl, request_params = zomato_detail_params, request_headers = zomato_headers)
-
+	try:
+		zomato_id = int(zomato_search_string["restaurants"][0]["restaurant"]["id"])
+		zomato_detailurl = "https://developers.zomato.com/api/v2.1/restaurant"
+		zomato_detail_params = {"res_id":zomato_id}
+		zomato_detail_string = make_request_using_cache(request_baseurl = zomato_detailurl, request_params = zomato_detail_params, request_headers = zomato_headers)
+	except:
+		zomato_id = "none"
 	try:
 		menu_url = zomato_detail_string["menu_url"]
 	except:
@@ -201,19 +200,23 @@ def get_and_store_zomato_data(searchterm):
 		cuisine = zomato_detail_string["cuisines"]
 	except:
 		cuisine = "No cuisine data available"
+	try:
+		photo_url = zomato_detail_string["photos_url"]
+	except:
+		photo_url = "No photos to show"
 
 	conn = sqlite.connect(DBNAME)
 	cur = conn.cursor()
 
 	statement = '''
-		INSERT INTO Restaurants_Detailed VALUES (?, ?, ?, ?)
+		INSERT INTO Restaurants_Detailed VALUES (?, ?, ?, ?, ?)
 	'''
-	params = (restaurant_id, zomato_id, cuisine, menu_url) 
+	params = (restaurant_id, zomato_id, cuisine, menu_url, photo_url) 
 	cur.execute(statement, params)
 	conn.commit()
 
 	conn.close()
-	pass
+	return(params)
 
 def process_command(comm, restaurant_list):
 	conn = sqlite.connect(DBNAME)
@@ -228,23 +231,77 @@ def process_command(comm, restaurant_list):
 			print("Number not in data set. Please try again.")
 			pass
 		try:
-			get_and_store_zomato_data(restaurant_list[iterator-1].name)
 			select_statement = '''SELECT Restaurants_Basic.Name, Restaurants_Basic.Id, Restaurants_Detailed.Restaurant_Id, Restaurants_Detailed.Menu '''
 			from_statement = '''FROM Restaurants_Basic '''
 			join_statement = '''JOIN Restaurants_Detailed '''
 			on_statement = '''ON Restaurants_Basic.Id = Restaurants_Detailed.Restaurant_Id '''
 			where_statement = '''WHERE Restaurants_Basic.Name = "{}" '''.format(restaurant_list[iterator-1].name)
-			print(where_statement)
 			statement_to_execute = select_statement + from_statement + join_statement + on_statement + where_statement
 			cur.execute(statement_to_execute)
 			result = cur.fetchone()[3]
 			webbrowser.open(result, new=2, autoraise=True)
-			pass
+			return result
 		except:
 			print("Menu not available")
+			return "Menu not available"
+#photo command
+	elif comm[0:5].lower() == "photo":
+		try: 
+			iterator = int(comm[-2:])
+		except:
+			iterator = int(comm[-1:])
+		if iterator > len(restaurant_list):
+			print("Number not in data set. Please try again.")
 			pass
+		try:
+			select_statement = '''SELECT Restaurants_Basic.Name, Restaurants_Basic.Id, Restaurants_Detailed.Restaurant_Id, Restaurants_Detailed.Photo '''
+			from_statement = '''FROM Restaurants_Basic '''
+			join_statement = '''JOIN Restaurants_Detailed '''
+			on_statement = '''ON Restaurants_Basic.Id = Restaurants_Detailed.Restaurant_Id '''
+			where_statement = '''WHERE Restaurants_Basic.Name = "{}" '''.format(restaurant_list[iterator-1].name)
+			statement_to_execute = select_statement + from_statement + join_statement + on_statement + where_statement
+			cur.execute(statement_to_execute)
+			result = cur.fetchone()[3]
+			webbrowser.open(result, new=2, autoraise=True)
+			return result
+		except:
+			print("Photos not available")
+			return "Photos not available"
+#cuisines command
+	elif comm.lower() == "cuisines":
+		select_statement = '''SELECT Restaurants_Basic.Name, Restaurants_Basic.Id, Restaurants_Detailed.Restaurant_Id, Restaurants_Detailed.Cuisine '''
+		from_statement = "FROM Restaurants_Basic "
+		join_statement = "JOIN Restaurants_Detailed ON Restaurants_Basic.Id = Restaurants_Detailed.Restaurant_Id "
+		statement_to_execute = select_statement + from_statement + join_statement
+		cur.execute(statement_to_execute)
+		result = cur.fetchall()
+		list_of_cuisines = []
+		for x in result:
+			food = x[3].split(", ")
+			if type(food) == list:
+				for x in food:
+					list_of_cuisines.append(x)
+			else:
+				list_of_cuisines.append(food)
+		cuisine_dict = {}
+		for x in list_of_cuisines:
+			if x in cuisine_dict:
+				cuisine_dict[x] += 1
+			else:
+				cuisine_dict[x] = 1
+		x_axis = []
+		y_axis = []
+		for x in cuisine_dict:
+			x_axis.append(x)
+			y_axis.append(cuisine_dict[x])
+
+		data = [go.Bar(
+					x = x_axis,
+					y = y_axis
+					)]
+		py.plot(data)
+		pass
 #map command
-#if time, get this to look better by plotting on mapbox
 	elif comm.lower() == "map":
 		select_statement = '''SELECT Restaurants_Basic.Name, Restaurants_Basic.Longitude, Restaurants_Basic.Latitude '''
 		from_statement = '''FROM Restaurants_Basic '''
@@ -312,45 +369,10 @@ def process_command(comm, restaurant_list):
 					lon=centerlong
 				),
 				pitch=0,
-				zoom=12
+				zoom=12.5
 				),
 			)
 
-
-		# trace1 = dict(
-		# 	type = "scattergeo",
-		# 	locationmode = "USA-states",
-		# 	lon = sitelongs,
-		# 	lat = sitelats,
-		# 	text = sitenames,
-		# 	mode = "markers",
-		# 	marker = dict(
-		# 		size = 10,
-		# 		symbol = "circle",
-		# 		color = "blue"
-		#  	))
-
-		# data = [trace1]
-
-
-		# layout = dict(
-		# 	title = "Restaurants in Ann Arbor (Hover for Restaurant Name)",
-		# 	geo = dict(
-		# 		scope = "usa",
-		# 		projection = dict(type="albers usa"),
-		# 		showland = True,
-		# 		landcolor = "rgb(250, 250, 250)",
-		# 		subunitcolor = "rgb(100, 217, 217)",
-		# 		countrycolor = "rgb(217, 100, 217)",
-		# 		lataxis = {"range": lat_axis},
-		# 		lonaxis = {"range": long_axis},
-		# 		center = {"lat":centerlat, "lon":centerlong},
-		# 		countrywidth = 3,
-		# 		subunitwidth = 3
-		# 		)
-		# 	)
-
-		
 		fig = dict(data=data, layout=layout)
 		py.plot(fig, validate=False)
 		pass
@@ -374,6 +396,7 @@ def process_command(comm, restaurant_list):
 			numbers_list.append(ratings_dict[x])
 		trace = go.Pie(labels = ratings_list, values = numbers_list)
 		py.plot([trace])
+		pass
 #reviews command
 	elif comm.lower() == "reviews":
 		select_statement = '''SELECT Restaurants_Basic.Name, Restaurants_Basic.Rating, Restaurants_Basic.Rating_Count '''
@@ -401,8 +424,9 @@ def process_command(comm, restaurant_list):
 #error handling
 	else:
 		print("Command not recognized. Please try again.")
+		return "Command not recognized."
 	conn.close()
-#something with cuisines if time
+
 def interactive_prompt():
 	print("Welcome to the Ann Arbor restaurant guide! Here is a list of some of the restaurants in Ann Arbor.")
 	iterator = 1
@@ -410,19 +434,21 @@ def interactive_prompt():
 	create_restaurant_db()
 	a2_rests = get_and_store_yelp_data()
 	for x in a2_rests:
+		get_and_store_zomato_data(x.name)
 		print(str(iterator) + ". {}".format(x.name))
 		iterator += 1
-	print("Enter 'menu_xx' to see a particular restaurant's menu. Enter 'map' to see a map of the restaurants. Enter 'ratings' to see a pie chart of all ratings, and 'reviews' to see the ratings and number of ratings plotted on a scatter plot. 'Next' will give you the next fifty restaurants in Ann Arbor. Enter 'quit' to quit and 'help' to see this text again.")
+	print("Enter 'menu_xx' to see a particular restaurant's menu or 'photo_xx' to see photos of a particular restaurant. Enter 'cuisines' to see how many options are available for each type of cuisine in Ann Arbor. Enter 'map' to see a map of the restaurants. Enter 'ratings' to see a pie chart of all ratings, and 'reviews' to see the ratings and number of ratings plotted on a scatter plot. 'Next' will give you the next fifty restaurants in Ann Arbor. Enter 'quit' to quit and 'help' to see this text again.")
 	comm = ""
 	while comm.lower() != 'exit':
 		comm = input("What would you like to do?: ")
 		if comm.lower() == "help":
-			print("Enter 'menu_xx' to see a particular restaurant's menu. Enter 'map' to see a map of the restaurants. Enter 'ratings' to see a pie chart of all ratings, and 'reviews' to see the ratings and number of ratings plotted on a scatter plot. 'Next' will give you the next fifty restaurants in Ann Arbor. Enter 'quit' to quit and 'help' to see this text again.")
+			print("Enter 'menu_xx' to see a particular restaurant's menu or 'photo_xx' to see photos of a particular restaurant. Enter 'cuisines' to see how many options are available for each type of cuisine in Ann Arbor. Enter 'map' to see a map of the restaurants. Enter 'ratings' to see a pie chart of all ratings, and 'reviews' to see the ratings and number of ratings plotted on a scatter plot. 'Next' will give you the next fifty restaurants in Ann Arbor. Enter 'quit' to quit and 'help' to see this text again.")
 			continue
 		elif comm.lower() == "next":
 			results = get_and_store_yelp_data(offset = offset_iterator, pk=offset_iterator + 1)
 			offset_iterator += 50
 			for x in results:
+				get_and_store_zomato_data(x.name)
 				print(str(iterator) + ". {}".format(x.name))
 				iterator += 1
 			a2_rests += results
